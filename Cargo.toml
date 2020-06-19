@@ -10,4 +10,5 @@ toml = "0.5.6"
 serde = { version = "1.0.112", features = ["derive"] }
 git2 = "0.13.6"
 git2_credentials = "0.6.1"
+eventual = "0.1.7"
 

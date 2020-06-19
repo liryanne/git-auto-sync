@@ -2,15 +2,16 @@
 
 use pathsearch::find_executable_in_path;
 use std::fs;
-use git2::{Repository, IndexAddOption, IntoCString, FetchOptions, RemoteCallbacks, Remote};
-use git2::FileMode::Tree;
+use git2::{Repository, IndexAddOption, FetchOptions, RemoteCallbacks, Remote};
 use git2_credentials::CredentialHandler;
 
+extern crate eventual;
+use eventual::Timer;
 
 // #[derive(Debug, Deserialize, Clone, Copy)]
 #[derive(serde::Deserialize)]
 pub struct Config {
-    // interval_minutes: u8,
+    interval_minutes: u32,
     repo_path: String,
     branch_name: String,
 }
@@ -86,7 +87,7 @@ fn pull(repo: &Repository, branch_name: &str) -> Result<(), &'static str> {
         
         let remote_ref_oid = remote_ref.target().unwrap();
         let remote_tree = repo.find_tree(remote_ref_oid).unwrap();
-        repo.checkout_tree(&remote_tree.into_object(), None);
+        repo.checkout_tree(&remote_tree.into_object(), None).unwrap();
         
         let head_ref_name = "refs/heads/".to_owned() + branch_name;
         let mut head_ref = repo.find_reference(head_ref_name.as_str()).unwrap();
@@ -94,18 +95,18 @@ fn pull(repo: &Repository, branch_name: &str) -> Result<(), &'static str> {
         match head_ref.set_target(remote_ref_oid, &"") {
             Err(e) => {
                 println!("error setting target: {}", e.message());
-                repo.branch_from_annotated_commit(branch_name, &remote_commit_ann, false);
+                repo.branch_from_annotated_commit(branch_name, &remote_commit_ann, false).unwrap();
             },
             Ok(_reference) => ()
         }
         
-        repo.head().unwrap().set_target(remote_ref_oid, &"");
+        repo.head().unwrap().set_target(remote_ref_oid, &"").unwrap();
 
         return Ok(())
     }
     
     if analysis.is_normal() {
-        repo.merge(&[&remote_commit_ann], None, None);
+        repo.merge(&[&remote_commit_ann], None, None).unwrap();
         
         let mut index = repo.index().unwrap();
         if index.has_conflicts() {
@@ -146,7 +147,7 @@ fn push(repo: &Repository) -> Result<(), &'static str> {
 
     let (mut remote, _) = get_remote(repo);
     
-    remote.push(&[String::from("")], None).unwrap();
+    remote.push(&[String::from("")], None);
 
     return Ok(())
 }
@@ -157,12 +158,18 @@ fn run() -> Result<(), &'static str> {
     let config: Config = toml::from_slice(&config_bytes).expect("Error parsing config file");
 
     let repo = Repository::open(config.repo_path).expect("Error opening repository");
+    
+    let interval = config.interval_minutes * 1000 * 60;
 
-    commit(&repo).unwrap();
-    pull(&repo, config.branch_name.as_str())?;
-    push(&repo)?;
-
-    println!("end");
+    let timer = Timer::new();
+    let ticks = timer.interval_ms(interval).iter();
+    for _ in ticks {        
+        commit(&repo).unwrap();
+        pull(&repo, config.branch_name.as_str())?;
+        push(&repo)?;
+        println!("end");
+    }
+    
     Ok(())
 }
 
