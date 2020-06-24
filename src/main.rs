@@ -2,10 +2,8 @@
 
 use pathsearch::find_executable_in_path;
 use std::fs;
-use git2::{Repository, IndexAddOption, FetchOptions, RemoteCallbacks, Remote};
+use git2::{Repository, IndexAddOption, FetchOptions, RemoteCallbacks, Remote, PushOptions};
 use git2_credentials::CredentialHandler;
-
-extern crate eventual;
 use eventual::Timer;
 
 // #[derive(Debug, Deserialize, Clone, Copy)]
@@ -44,7 +42,7 @@ fn commit(repo: &Repository) -> Result<(), ()> {
     Ok(())
 }
 
-fn get_remote(repo: &Repository) -> (Remote, FetchOptions) {
+fn get_remote(repo: &Repository) -> (Remote, RemoteCallbacks) {
     let remote = repo.find_remote("origin").unwrap();
 
     let mut remote_callbacks = RemoteCallbacks::new();
@@ -54,20 +52,21 @@ fn get_remote(repo: &Repository) -> (Remote, FetchOptions) {
         credential_handler.try_next_credential(url, username, allowed)
     );
     remote_callbacks.push_update_reference(move |name, status| {
-        println!("name: {}; status: {:?}", name, status);
+        println!("ref pushed. name: {}; status: {:?}", name, status);
         Ok(())
     });
-
-    let mut fetch_options = FetchOptions::new();
-    fetch_options.remote_callbacks(remote_callbacks);
-    
-    (remote, fetch_options)
+    (remote, remote_callbacks)
 }
 
 fn pull(repo: &Repository, branch_name: &str) -> Result<(), &'static str> {
     println!("starting pull...");
     
-    let (mut remote, mut fetch_options) = get_remote(repo);
+    let (mut remote, remote_callbacks) = get_remote(repo);
+
+    let mut fetch_options = FetchOptions::new();
+    fetch_options
+        .remote_callbacks(remote_callbacks)
+        .update_fetchhead(true);
 
     remote.fetch(&[branch_name], Some(&mut fetch_options), None).unwrap();
     
@@ -82,30 +81,9 @@ fn pull(repo: &Repository, branch_name: &str) -> Result<(), &'static str> {
         return Ok(())
     }
     
-    if analysis.is_fast_forward() {
-        println!("fast forward");
+    if analysis.is_fast_forward() || analysis.is_normal() {
+        println!("merging...");
         
-        let remote_ref_oid = remote_ref.target().unwrap();
-        let remote_tree = repo.find_tree(remote_ref_oid).unwrap();
-        repo.checkout_tree(&remote_tree.into_object(), None).unwrap();
-        
-        let head_ref_name = "refs/heads/".to_owned() + branch_name;
-        let mut head_ref = repo.find_reference(head_ref_name.as_str()).unwrap();
-        
-        match head_ref.set_target(remote_ref_oid, &"") {
-            Err(e) => {
-                println!("error setting target: {}", e.message());
-                repo.branch_from_annotated_commit(branch_name, &remote_commit_ann, false).unwrap();
-            },
-            Ok(_reference) => ()
-        }
-        
-        repo.head().unwrap().set_target(remote_ref_oid, &"").unwrap();
-
-        return Ok(())
-    }
-    
-    if analysis.is_normal() {
         repo.merge(&[&remote_commit_ann], None, None).unwrap();
         
         let mut index = repo.index().unwrap();
@@ -142,37 +120,47 @@ fn pull(repo: &Repository, branch_name: &str) -> Result<(), &'static str> {
     return Err("Unknown merge analysis result");
 }
 
-fn push(repo: &Repository) -> Result<(), &'static str> {
+fn push(repo: &Repository, branch_name: &str) -> Result<(), &'static str> {
     println!("starting push...");
 
-    let (mut remote, _) = get_remote(repo);
+    let (mut remote, remote_callbacks) = get_remote(repo);
     
-    remote.push(&[String::from("")], None);
+    let mut push_options = PushOptions::new();
+    push_options.remote_callbacks(remote_callbacks);
+
+    let head_ref_name = "refs/heads/".to_owned() + branch_name;
+    remote.push(&[head_ref_name], Some(&mut push_options)).unwrap();
 
     return Ok(())
 }
 
-fn run() -> Result<(), &'static str> {
-    let config_path = find_executable_in_path("git-auto-sync.toml").expect("Config file not found");
-    let config_bytes = fs::read(config_path).expect("Error reading config file.");
-    let config: Config = toml::from_slice(&config_bytes).expect("Error parsing config file");
-
-    let repo = Repository::open(config.repo_path).expect("Error opening repository");
-    
-    let interval = config.interval_minutes * 1000 * 60;
-
-    let timer = Timer::new();
-    let ticks = timer.interval_ms(interval).iter();
-    for _ in ticks {        
-        commit(&repo).unwrap();
-        pull(&repo, config.branch_name.as_str())?;
-        push(&repo)?;
-        println!("end");
-    }
-    
+fn run(repo: &Repository, branch_name: &str) -> Result<(), &'static str> {
+    commit(&repo).unwrap();
+    pull(&repo, branch_name)?;
+    push(&repo, branch_name)?;
     Ok(())
 }
 
 fn main() {
-    run().unwrap();
+    let config_path = find_executable_in_path("git-auto-sync.toml").expect("Config file not found");
+    let config_bytes = fs::read(config_path).expect("Error reading config file");
+    let config: Config = toml::from_slice(&config_bytes).expect("Error parsing config file");
+
+    let repo = Repository::open(config.repo_path).expect("Error opening repository");
+    let branch_name = config.branch_name.as_str();
+
+    let interval_ms = config.interval_minutes * 1000 * 60;
+
+    let handled_run = || {
+        run(&repo, branch_name).unwrap_or_else(|e| {
+            println!("error: {}", e);
+            // play sound
+        });
+        println!("end\n");
+    };
+    
+    handled_run();
+    for _ in Timer::new().interval_ms(interval_ms).iter() {
+        handled_run();
+    }
 }
