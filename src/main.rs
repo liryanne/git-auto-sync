@@ -83,6 +83,9 @@ fn pull(repo: &Repository, branch_name: &str) -> Result<(), &'static str> {
     
     if analysis.is_fast_forward() || analysis.is_normal() {
         println!("merging...");
+
+        let head = repo.head().unwrap();
+        let parent_commit = head.peel_to_commit().unwrap();
         
         repo.merge(&[&remote_commit_ann], None, None).unwrap();
         
@@ -94,12 +97,18 @@ fn pull(repo: &Repository, branch_name: &str) -> Result<(), &'static str> {
             return Err("aborting: conflicts found")
         }
         
+        let diff = repo.diff_tree_to_index(Some(&parent_commit.tree().unwrap()), Some(&index), None).unwrap();
+
+        if diff.deltas().is_empty() {
+            println!("empty tree. skipping...");
+            return Ok(());
+        }
+        
         let tree_oid = index.write_tree().unwrap();
         let tree = repo.find_tree(tree_oid).unwrap();
         
         let signature = repo.signature().unwrap();
         
-        let head = repo.head().unwrap();
         let commit_oid = 
             repo.commit(
                 head.name(), 
@@ -107,7 +116,7 @@ fn pull(repo: &Repository, branch_name: &str) -> Result<(), &'static str> {
                 &signature, 
                 "merge", 
                 &tree, 
-                &[&head.peel_to_commit().unwrap(), &remote_ref.peel_to_commit().unwrap()])
+                &[&parent_commit, &remote_ref.peel_to_commit().unwrap()])
             .unwrap();
         
         println!("commit oid: {}", commit_oid.to_string());
