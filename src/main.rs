@@ -4,7 +4,8 @@ use pathsearch::find_executable_in_path;
 use std::fs;
 use git2::{Repository, IndexAddOption, FetchOptions, RemoteCallbacks, Remote, PushOptions};
 use git2_credentials::CredentialHandler;
-use eventual::Timer;
+use eventual::{Timer};
+use std::time::Duration;
 
 // #[derive(Debug, Deserialize, Clone, Copy)]
 #[derive(serde::Deserialize)]
@@ -143,14 +144,15 @@ fn push(repo: &Repository, branch_name: &str) -> Result<(), &'static str> {
     return Ok(())
 }
 
-fn run(repo: &Repository, branch_name: &str) -> Result<(), &'static str> {
+async fn run(repo: &Repository, branch_name: &str) -> Result<(), Box<dyn std::error::Error>> {
     commit(&repo).unwrap();
     pull(&repo, branch_name)?;
     push(&repo, branch_name)?;
     Ok(())
 }
 
-fn main() {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config_path = find_executable_in_path("git-auto-sync.toml").expect("Config file not found");
     let config_bytes = fs::read(config_path).expect("Error reading config file");
     let config: Config = toml::from_slice(&config_bytes).expect("Error parsing config file");
@@ -160,16 +162,27 @@ fn main() {
 
     let interval_ms = config.interval_minutes * 1000 * 60;
 
-    let handled_run = || {
-        run(&repo, branch_name).unwrap_or_else(|e| {
-            println!("error: {}", e);
-            // play sound
-        });
+    let handled_run = || async {
+        let run = async {
+            run(&repo, branch_name).await.unwrap_or_else(|e| {
+                println!("run error: {}", e);
+                // play sound
+            })
+        };
+        
+        let timeout_result = tokio::time::timeout(Duration::from_secs((interval_ms / 2) as u64), run).await;
+        
+        if let Err(_) = timeout_result {
+            println!("timed out")
+        }
+        
         println!("end\n");
     };
-    
-    handled_run();
+
+    handled_run().await;
     for _ in Timer::new().interval_ms(interval_ms).iter() {
-        handled_run();
+        handled_run().await;
     }
+
+    Ok(())    
 }
