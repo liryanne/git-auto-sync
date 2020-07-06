@@ -6,6 +6,7 @@ use git2::{Repository, IndexAddOption, FetchOptions, RemoteCallbacks, Remote, Pu
 use git2_credentials::CredentialHandler;
 use eventual::{Timer};
 use std::time::Duration;
+use chrono::{DateTime, Utc, Timelike, Datelike};
 
 // #[derive(Debug, Deserialize, Clone, Copy)]
 #[derive(serde::Deserialize)]
@@ -145,6 +146,9 @@ fn push(repo: &Repository, branch_name: &str) -> Result<(), &'static str> {
 }
 
 async fn run(repo: &Repository, branch_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let now: DateTime<Utc> = Utc::now();
+    println!("{:02}/{:02}/{:04} {:02}:{:02}:{:02}", now.day(), now.month(), now.year(), now.hour(), now.minute(), now.second());
+    
     commit(&repo).unwrap();
     pull(&repo, branch_name)?;
     push(&repo, branch_name)?;

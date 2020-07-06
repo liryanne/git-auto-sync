@@ -12,3 +12,4 @@ git2 = "0.13.6"
 git2_credentials = "0.6.1"
 eventual = "0.1.7"
 tokio = { version = "0.2.21", features = ["full"]}
+chrono = "0.4.13"
