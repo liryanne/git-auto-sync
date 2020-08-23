@@ -193,11 +193,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     let wav_path = dir.join("assets").join("error.wav");
-                    let file = File::open(wav_path).unwrap();
-
-                    let device = rodio::default_output_device().unwrap();
-                    let source = rodio::Decoder::new(BufReader::new(file)).unwrap();
-                    rodio::play_raw(&device, source.convert_samples());
+                    if let Ok(file) = File::open(wav_path.clone()) {
+                        let device = rodio::default_output_device().unwrap();
+                        let source = rodio::Decoder::new(BufReader::new(file)).unwrap();
+                        rodio::play_raw(&device, source.convert_samples());
+                    } else {
+                        println!("path error: {:?}", wav_path);
+                    }
                 }
             })
         };
